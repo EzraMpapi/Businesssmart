@@ -1,0 +1,12 @@
+{
+  "name": "BusinessSphere ERP",
+  "short_name": "BusinessSphere",
+  "description": "27-module ERP for East Africa",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#16A34A",
+  "orientation": "any",
+  "lang": "en",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
