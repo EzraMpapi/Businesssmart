@@ -3,19 +3,12 @@
    SUPABASE CLIENT — hand-rolled, fetch-based (no SDK, matches BEIRAHISI pattern)
    ============================================================================= */
 
-// A real Supabase project — set here directly. IS_CONFIGURED is now true,
-// which means every one of the ~174 places in this file that branch on it
-// switches from local demo seed data to genuine database calls: real
-// Login/Signup, real invoices, real everything. This depends entirely on
-// businesssphere-schema.sql having actually been run against this exact
-// project first — the anon key alone gets you a connection, not tables.
-// ─── SUPABASE CONFIG ──────────────────────────────────────────────────────
-// Option A (recommended): set VITE_SUPABASE_URL in Netlify/Vercel env vars
-// Option B: replace the empty strings below with your actual URL and key
-// Get these from: supabase.com → your project → Settings → API
-export const SUPABASE_URL     = "https://bqrpiookucsdjvcvjrul.supabase.co";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJxcnBpb29rdWNzZGp2Y3ZqcnVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjAxOTgsImV4cCI6MjA5ODgzNjE5OH0.qfjK9-OTsRJFuywvZFWsAFsOgMWzLIvx8Fc5-xeQuqA";
-export const IS_CONFIGURED     = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+// Read Supabase configuration from Vite environment variables (do NOT store
+// secrets in source). In Vite, env vars exposed to the client must be prefixed
+// with VITE_. Set these in Vercel (or locally in a .env file for dev).
+export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
+export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+export const IS_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 // A real, deliberate architectural choice, not an oversight: IS_CONFIGURED
 // is a single global flag, evaluated once, read by every one of this
