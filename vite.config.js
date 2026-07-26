@@ -14,10 +14,10 @@ export default defineConfig({
           "vendor-icons":   ["lucide-react"],
           "vendor-xlsx":    ["xlsx"],
           "shared":         [
-            "./src/shared/supabase.js",
-            "./src/shared/hooks.jsx",
-            "./src/shared/utils.jsx",
-            "./src/shared/constants.jsx"
+            "./supabase.js",
+            "./hooks.jsx",
+            "./utils.jsx",
+            "./constants.jsx"
           ],
         },
       },
