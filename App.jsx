@@ -40,8 +40,8 @@ import * as XLSX from "xlsx";
 // Option A (recommended): set VITE_SUPABASE_URL in Netlify/Vercel env vars
 // Option B: replace the empty strings below with your actual URL and key
 // Get these from: supabase.com → your project → Settings → API
-const SUPABASE_URL     = "https://bqrpiookucsdjvcvjrul.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJxcnBpb29rdWNzZGp2Y3ZqcnVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjAxOTgsImV4cCI6MjA5ODgzNjE5OH0.qfjK9-OTsRJFuywvZFWsAFsOgMWzLIvx8Fc5-xeQuqA";
+const SUPABASE_URL     = "https://rlhngsrihahhyxnjxrxm.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsaG5nc3JpaGFoaHl4bmp4cnhtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NjI0NzMsImV4cCI6MjEwMDAzODQ3M30.J3M1ELTb1dEoKx4tQfn_Yk7H15HIoxIW4PI3dyWYEHE";
 const IS_CONFIGURED     = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 // A real, deliberate architectural choice, not an oversight: IS_CONFIGURED
@@ -75,32 +75,234 @@ function authHeaders() {
   };
 }
 
-// Real Supabase Auth REST calls — the actual GoTrue endpoints every
-// supabase-js client calls under the hood, hit directly with fetch() the
-// same way sb() hits PostgREST directly. Only meaningful when IS_CONFIGURED
-// (a real Supabase project is connected); LoginPage/SignupPage below
-// branch on that constant and simulate the flow locally in demo mode
-// rather than pretending to authenticate against a backend that isn't there.
+// ═══════════════════════════════════════════════════════════════════════════
+// SENIOR BACKEND INTEGRATION — Production-Grade Error Handling & Validation
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Request retry logic with exponential backoff
+async function fetchWithRetry(url, options = {}, maxRetries = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, { ...options, timeout: 10000 });
+      if (res.ok) return res;
+      if (res.status === 429 || res.status >= 500) {
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      return res;
+    } catch (e) {
+      lastError = e;
+      if (attempt < maxRetries - 1) {
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError || new Error("Max retries exceeded");
+}
+// ═══════════════════════════════════════════════════════════════════════════
+// REQUEST CACHING & DEDUPLICATION — Optimize Backend Load
+// ═══════════════════════════════════════════════════════════════════════════
+
+const requestCache = new Map();
+const pendingRequests = new Map();
+
+// Cache management with TTL (Time To Live)
+function getCacheKey(url, method) {
+  return `${method}:${url}`;
+}
+
+function getCachedResponse(url, method, ttl = 60000) {
+  const key = getCacheKey(url, method);
+  const cached = requestCache.get(key);
+  if (cached && Date.now() - cached.timestamp < ttl) {
+    return cached.data;
+  }
+  requestCache.delete(key);
+  return null;
+}
+
+function setCachedResponse(url, method, data) {
+  const key = getCacheKey(url, method);
+  requestCache.set(key, { data, timestamp: Date.now() });
+}
+
+// Request deduplication - prevent duplicate concurrent requests
+async function fetchWithDedup(url, options = {}) {
+  const key = getCacheKey(url, options.method || "GET");
+  
+  // Return pending request if one exists
+  if (pendingRequests.has(key)) {
+    return pendingRequests.get(key);
+  }
+  
+  // Check cache first
+  const cached = getCachedResponse(url, options.method || "GET");
+  if (cached) return Promise.resolve(cached);
+  
+  // Create new request
+  const promise = fetchWithRetry(url, options)
+    .then(res => res.json())
+    .finally(() => pendingRequests.delete(key));
+  
+  pendingRequests.set(key, promise);
+  return promise;
+}
+
+// Clear cache for specific table or all
+function clearCache(table = null) {
+  if (table) {
+    for (const [key] of requestCache) {
+      if (key.includes(`/${table}`)) requestCache.delete(key);
+    }
+  } else {
+    requestCache.clear();
+  }
+}
+
+// Validate email format
+function validateEmail(email) {
+// ═══════════════════════════════════════════════════════════════════════════
+// DATA VALIDATION & ERROR LOGGING — Production-Grade Observability
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Centralized error logging with context
+const errorLog = [];
+const MAX_LOG_ENTRIES = 1000;
+
+function logError(context, error, severity = "error") {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    context,
+    message: error?.message || String(error),
+    stack: error?.stack,
+    severity,
+    status: error?.status,
+    table: error?.table,
+  };
+  
+  errorLog.push(entry);
+  if (errorLog.length > MAX_LOG_ENTRIES) errorLog.shift();
+  
+  console.error(`[${severity.toUpperCase()}] ${context}:`, error);
+  return entry;
+}
+
+// Data validation utilities
+const validators = {
+  email: (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val),
+  phone: (val) => /^\+?[\d\s\-()]{10,}$/.test(val),
+  currency: (val) => !isNaN(parseFloat(val)) && isFinite(val),
+  date: (val) => !isNaN(Date.parse(val)),
+  uuid: (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val),
+  nonEmpty: (val) => val !== null && val !== undefined && String(val).trim() !== "",
+};
+
+function validateData(data, schema) {
+  const errors = [];
+  
+  for (const [field, rules] of Object.entries(schema)) {
+    const value = data[field];
+    
+    if (rules.required && !validators.nonEmpty(value)) {
+      errors.push(`${field} is required`);
+      continue;
+    }
+    
+    if (value && rules.type) {
+      if (rules.type === "email" && !validators.email(value)) {
+        errors.push(`${field} must be a valid email`);
+      } else if (rules.type === "phone" && !validators.phone(value)) {
+        errors.push(`${field} must be a valid phone number`);
+      } else if (rules.type === "currency" && !validators.currency(value)) {
+        errors.push(`${field} must be a valid currency amount`);
+      } else if (rules.type === "date" && !validators.date(value)) {
+        errors.push(`${field} must be a valid date`);
+      }
+    }
+    
+    if (rules.minLength && String(value).length < rules.minLength) {
+      errors.push(`${field} must be at least ${rules.minLength} characters`);
+    }
+    
+    if (rules.maxLength && String(value).length > rules.maxLength) {
+      errors.push(`${field} must not exceed ${rules.maxLength} characters`);
+    }
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
+
+// Safe data transformation with error handling
+function safeTransform(data, transformer) {
+  try {
+    return { success: true, data: transformer(data) };
+  } catch (error) {
+    logError("Data transformation", error, "warn");
+    return { success: false, error: error.message, data: null };
+  }
+}
+
+// Get error logs for debugging
+function getErrorLogs(context = null, limit = 50) {
+  let logs = errorLog;
+  if (context) logs = logs.filter(l => l.context.includes(context));
+  return logs.slice(-limit);
+}
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+// Validate password strength
+function validatePassword(password) {
+  return password && password.length >= 8;
+}
+
+// Real Supabase Auth REST calls with enhanced error handling
 async function authSignUp(email, password) {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
-    body: JSON.stringify({ email, password }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description || data.msg || "Sign up failed.");
-  return data; // { access_token, refresh_token, user } once email confirmation is satisfied, or { user } if a project requires confirmation first
+  if (!validateEmail(email)) throw new Error("Invalid email format.");
+  if (!validatePassword(password)) throw new Error("Password must be at least 8 characters.");
+  
+  try {
+    const res = await fetchWithRetry(`${SUPABASE_URL}/auth/v1/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error_description || data.msg || "Sign up failed.");
+    return data;
+  } catch (error) {
+    console.error("Sign up error:", error);
+    throw error;
+  }
 }
 
 async function authSignIn(email, password) {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
-    body: JSON.stringify({ email, password }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description || data.msg || "Incorrect email or password.");
-  return data; // { access_token, refresh_token, user }
+  if (!validateEmail(email)) throw new Error("Invalid email format.");
+  if (!password) throw new Error("Password is required.");
+  
+  try {
+    const res = await fetchWithRetry(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error_description || data.msg || "Incorrect email or password.");
+    
+    // Store token securely
+    if (data.access_token) {
+      localStorage.setItem("bs_access_token", data.access_token);
+      if (data.refresh_token) localStorage.setItem("bs_refresh_token", data.refresh_token);
+    }
+    return data;
+  } catch (error) {
+    console.error("Sign in error:", error);
+    throw error;
+  }
 }
 
 async function authSignOut(accessToken) {
@@ -193,19 +395,37 @@ function sb(table) {
       single = true;
       return builder;
     },
+// Enhanced query builder run method with error handling
     async run() {
       const url = `${path}?${params.toString()}`;
-      const res = await fetch(url, {
-        method,
-        headers: {
-          ...authHeaders(),
-          Prefer: method === "GET" ? undefined : "return=representation",
-        },
-        body,
-      });
-      if (!res.ok) throw new Error(`Supabase ${method} ${table} failed: ${res.status}`);
-      const data = await res.json();
-      return single ? data[0] : data;
+      try {
+        const res = await fetchWithRetry(url, {
+          method,
+          headers: {
+            ...authHeaders(),
+            Prefer: method === "GET" ? undefined : "return=representation",
+          },
+          body,
+        });
+        
+        if (!res.ok) {
+          let errorMsg = `Database error: ${method} ${table} (${res.status})`;
+          try {
+            const errorData = await res.json();
+            errorMsg = errorData.message || errorData.error_description || errorMsg;
+          } catch (e) {}
+          const error = new Error(errorMsg);
+          error.status = res.status;
+          error.table = table;
+          throw error;
+        }
+        
+        const data = await res.json();
+        return single ? (Array.isArray(data) ? data[0] : data) : data;
+      } catch (error) {
+        console.error(`[${method}] ${table}:`, error.message);
+        throw error;
+      }
     },
     // allow `await sb(table).select().eq(...)` directly, like supabase-js
     then(resolve, reject) {
