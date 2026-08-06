@@ -40,9 +40,10 @@ import * as XLSX from "xlsx";
 // Option A (recommended): set VITE_SUPABASE_URL in Netlify/Vercel env vars
 // Option B: replace the empty strings below with your actual URL and key
 // Get these from: supabase.com → your project → Settings → API
-const SUPABASE_URL     = "https://rlhngsrihahhyxnjxrxm.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsaG5nc3JpaGFoaHl4bmp4cnhtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NjI0NzMsImV4cCI6MjEwMDAzODQ3M30.J3M1ELTb1dEoKx4tQfn_Yk7H15HIoxIW4PI3dyWYEHE";
-const IS_CONFIGURED     = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+const SUPABASE_URL          = "https://rlhngsrihahhyxnjxrxm.supabase.co";
+const SUPABASE_ANON_KEY     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsaG5nc3JpaGFoaHl4bmp4cnhtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NjI0NzMsImV4cCI6MjEwMDAzODQ3M30.J3M1ELTb1dEoKx4tQfn_Yk7H15HIoxIW4PI3dyWYEHE";
+const SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsaG5nc3JpaGFoaHl4bmp4cnhtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDQ2MjQ3MywiZXhwIjoyMTAwMDM4NDczfQ.YQCXSybS-YxJLtqFS4SXtmQLo9QDmSkGOLdWSN19y_c";
+const IS_CONFIGURED        = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_SERVICE_KEY);
 
 // A real, deliberate architectural choice, not an oversight: IS_CONFIGURED
 // is a single global flag, evaluated once, read by every one of this
@@ -65,14 +66,27 @@ let DEMO_OVERRIDE = false;
 // multi-user login exists, since different signed-in users belong to
 // different companies. The client never supplies its own company filter;
 // the database is the single source of truth for which rows a session can see.
+// ═══════════════════════════════════════════════════════════════════════════
+// DUAL-KEY AUTHENTICATION SYSTEM — ANON + SERVICE_ROLE
+// ═══════════════════════════════════════════════════════════════════════════
 
-function authHeaders() {
-  const token = (typeof window !== "undefined" && window.localStorage?.getItem("bs_access_token")) || SUPABASE_ANON_KEY;
+// Determine which API key to use based on operation type
+function getApiKey(operation = "read") {
+  // Use SERVICE_ROLE for admin/privileged operations
+  const adminOps = ["admin", "rpc", "schema", "delete", "bulk", "insert"];
+  return adminOps.includes(operation) ? SUPABASE_SERVICE_KEY : SUPABASE_ANON_KEY;
+}
+
+function authHeaders(operation = "read") {
+  const token = (typeof window !== "undefined" && window.localStorage?.getItem("bs_access_token")) || getApiKey(operation);
+  const apiKey = getApiKey(operation);
+  
   return {
-    apikey: SUPABASE_ANON_KEY,
+    apikey: apiKey,
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
+}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -347,7 +361,7 @@ function authSignInWithOAuth(provider) {
 async function callRpc(name, params, accessToken) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+    headers: { ...authHeaders("rpc"), Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify(params),
   });
   const data = await res.json();
@@ -399,10 +413,16 @@ function sb(table) {
     async run() {
       const url = `${path}?${params.toString()}`;
       try {
+        // Determine operation type for correct API key selection
+        let operationType = "read";
+        if (method === "POST") operationType = "insert";
+        else if (method === "PATCH") operationType = "update";
+        else if (method === "DELETE") operationType = "delete";
+        
         const res = await fetchWithRetry(url, {
           method,
           headers: {
-            ...authHeaders(),
+            ...authHeaders(operationType),
             Prefer: method === "GET" ? undefined : "return=representation",
           },
           body,
